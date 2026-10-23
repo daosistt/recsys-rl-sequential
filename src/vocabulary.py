@@ -6,9 +6,10 @@ class Vocabulary:
 
     Args:
         train: Таблица обучающих историй с колонкой item_id.
+        min_frequency: Минимальное число появлений объекта в train.
     """
 
-    def __init__(self, train: pd.DataFrame) -> None:
+    def __init__(self, train: pd.DataFrame, min_frequency: int = 1) -> None:
         self.token_to_item: list[int | str] = []
         self.item_to_token: dict[int | str, int] = {}
         self._SPECIAL_TOKENS = ["<pad>", "<unk>"]
@@ -17,14 +18,15 @@ class Vocabulary:
             for history in train.item_id
             for item_id in history
         )
-        self._build_vocab(item_freq)
+        self._build_vocab(item_freq, min_frequency)
 
-    def _build_vocab(self, item_freq: dict[int, int]) -> None:
+    def _build_vocab(self, item_freq: dict[int, int], min_frequency: int) -> None:
         for token in self._SPECIAL_TOKENS:
             self._append_token(token)
 
-        for item_id in item_freq:
-            self._append_token(int(item_id))
+        for item_id, frequency in item_freq.items():
+            if frequency >= min_frequency:
+                self._append_token(int(item_id))
 
     def _append_token(self, token: int | str) -> None:
         if token not in self.item_to_token:

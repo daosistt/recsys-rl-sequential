@@ -22,6 +22,40 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("RECSYS_DATA_DIR", PROJECT_ROOT / "data"))
 ARTIFACTS_DIR = Path(os.environ.get("RECSYS_ARTIFACTS_DIR", PROJECT_ROOT / "artifacts"))
 
+
+def setup_paths() -> None:
+    """Настроить пути для локального запуска, Colab или Kaggle."""
+    global DATA_DIR, ARTIFACTS_DIR
+
+    data_dir = PROJECT_ROOT / "data"
+    artifacts_dir = PROJECT_ROOT / "artifacts"
+
+    if Path("/kaggle/input").is_dir():
+        artifacts_dir = Path("/kaggle/working/artifacts")
+        if "RECSYS_DATA_DIR" not in os.environ:
+            files = sorted(Path("/kaggle/input").rglob("listens.parquet"))
+            if len(files) != 1:
+                raise ValueError(
+                    "Подключите dataset с одним listens.parquet или задайте "
+                    "RECSYS_DATA_DIR — путь к папке с нужным файлом."
+                )
+            data_dir = files[0].parent
+    elif Path("/content").is_dir():
+        from google.colab import drive
+
+        drive.mount("/content/drive")
+        drive_root = Path("/content/drive/MyDrive/recsys")
+        artifacts_dir = drive_root / "artifacts"
+        if "RECSYS_DATA_DIR" not in os.environ:
+            data_dir = Path("/content/recsys/data")
+            data_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(drive_root / "data/listens.parquet", data_dir / "listens.parquet")
+
+    DATA_DIR = Path(os.environ.get("RECSYS_DATA_DIR", data_dir))
+    ARTIFACTS_DIR = Path(os.environ.get("RECSYS_ARTIFACTS_DIR", artifacts_dir))
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
 # Параметры модели GPT-2
 GPT2_PARAMS = {
     "n_positions": 64,
@@ -33,9 +67,10 @@ GPT2_PARAMS = {
     "eos_token_id": None,
 }
 
-# Небольшой эксперимент для Colab T4
+# Параметры обучения
 TRAIN_PARAMS = {
     "data_size": 1000,
+    "min_frequency": 5,
     "batch_size": 32,
     "num_epochs": 5,
     "lr": 3e-4,
