@@ -1,0 +1,9 @@
+data/
+artifacts/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+src/__pycache__/
+tests/
+AGENTS.md
