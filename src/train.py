@@ -4,6 +4,7 @@ from src.config import (
     GPT2LMHeadModel,
     DataLoader,
     torch,
+    tqdm,
     device,
     ARTIFACTS_DIR,
     Path
@@ -67,7 +68,7 @@ def train_loop(
     best_val_loss = float("inf")
     loss_history = {"train": [], "val": [], "train_epoch": [], "val_epoch": []}
 
-    for epoch in range(num_epochs):
+    for epoch in tqdm(range(num_epochs), desc="Epochs"):
 
         # Train
         model.train()

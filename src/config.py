@@ -16,6 +16,7 @@ import torch
 from torch.optim import Optimizer, AdamW
 from torch.utils.data import Dataset, DataLoader
 from transformers import GPT2Config, GPT2LMHeadModel
+from tqdm.auto import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("RECSYS_DATA_DIR", PROJECT_ROOT / "data"))
