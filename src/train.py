@@ -42,7 +42,7 @@ def train_loop(
     val_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device = device,
-    num_epochs: int = 10,
+    num_epochs: int = 5,
     checkpoint_dir: Path = ARTIFACTS_DIR / "checkpoints",
     plot_every: int = 50,
 ) -> dict[str, list[float]]:
