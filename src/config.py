@@ -35,8 +35,8 @@ GPT2_PARAMS = {
 # Небольшой эксперимент для Colab T4
 TRAIN_PARAMS = {
     "data_size": 100,
-    "batch_size": 16,
-    "num_epochs": 3,
+    "batch_size": 32,
+    "num_epochs": 10,
     "lr": 3e-4,
     "weight_decay": 0.01,
     "seed": 42,
