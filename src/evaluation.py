@@ -1,4 +1,4 @@
-from src.config import GPT2Config, GPT2LMHeadModel, Path, json, np, pd, pickle, torch, tqdm
+from src.config import Counter, GPT2Config, GPT2LMHeadModel, Path, json, np, pd, pickle, torch, tqdm
 from src.vocabulary import Vocabulary
 
 
@@ -141,6 +141,63 @@ def evaluate_metrics(
             "MAP@K": map_at_k(recommendations, targets, k),
         })
     return pd.DataFrame(results).set_index("K")
+
+
+def compare_baselines(
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+    vocab: Vocabulary,
+    targets: list[list[int]],
+    model_metrics: pd.DataFrame,
+    ks: tuple[int, ...] = (5, 10, 20),
+    model_name: str = "GPT-2",
+) -> pd.DataFrame:
+    """Сравнить модель с общей популярностью и личными частотами.
+
+    Args:
+        train: Истории для расчёта общей популярности.
+        val: Истории, добавляемые в личные частоты.
+        test: Задаёт порядок пользователей; пустые истории пропускаются.
+        vocab: Общий словарь кандидатов для всех стратегий.
+        targets: Первые test-объекты пользователей с непустыми историями.
+        model_metrics: Результат evaluate_metrics для модели на тех же примерах.
+        ks: Значения K, совпадающие с model_metrics.
+        model_name: Название модели в таблице сравнения.
+
+    Returns:
+        Таблица метрик с индексами Model и K.
+    """
+    max_k = max(ks)
+    global_counts = Counter(
+        int(item)
+        for history in train.item_id
+        for item in history
+        if int(item) in vocab
+    )
+    popular_items = [item for item, count in global_counts.most_common(max_k)]
+    popular_recommendations = [popular_items.copy() for _ in targets]
+
+    histories = {row.uid: list(row.item_id) for row in train.itertuples(index=False)}
+    for row in val.itertuples(index=False):
+        histories[row.uid].extend(row.item_id)
+
+    personal_recommendations = []
+    for row in test.itertuples(index=False):
+        if len(row.item_id) == 0:
+            continue
+        counts = Counter(int(item) for item in histories[row.uid] if int(item) in vocab)
+        ranked = [item for item, count in counts.most_common(max_k)]
+        # Дополняем личный топ общепопулярными треками без повторов.
+        seen = set(ranked)
+        ranked.extend(item for item in popular_items if item not in seen)
+        personal_recommendations.append(ranked[:max_k])
+
+    return pd.concat({
+        "Popularity": evaluate_metrics(popular_recommendations, targets, ks),
+        "Personal frequency": evaluate_metrics(personal_recommendations, targets, ks),
+        model_name: model_metrics,
+    }, names=["Model"])
 
 
 def recall_at_k(recommendations: list[int], targets: list[int], k: int = 10) -> float:
