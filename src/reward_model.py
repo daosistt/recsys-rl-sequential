@@ -76,7 +76,8 @@ def extract_reward_features(
     feature_device = next(backbone.parameters()).device
     features = []
     with torch.no_grad():
-        for start in tqdm(range(0, len(sequences), batch_size), desc="Reward features"):
+        for start in tqdm(range(0, len(sequences), batch_size), desc="Reward features",
+                          disable=len(sequences) <= batch_size):
             batch = sequences[start:start + batch_size]
             length = max(map(len, batch))
             ids = torch.zeros((len(batch), length), dtype=torch.long, device=feature_device)
@@ -101,7 +102,7 @@ def prepare_reward_features(
     """Заморозить GPT-2 и подготовить признаки и цели для трёх частей данных.
 
     Args:
-        model: Обученный GPT2LMHeadModel.
+        model: Исходный GPT2LMHeadModel или дообученный UnfrozenRewardModel.
         vocab: Его сохранённый словарь.
         train: Обучающие истории.
         val: Истории validation.
@@ -113,6 +114,7 @@ def prepare_reward_features(
     """
     model.requires_grad_(False)
     model.eval()
+    backbone = model.backbone if hasattr(model, "backbone") else model.transformer
     test_context = train[["uid", "item_id"]].copy()
     test_context["item_id"] = [
         list(train_items) + list(val_items)
@@ -126,7 +128,7 @@ def prepare_reward_features(
             data, context, vocab, model.config.n_positions,
             params[f"{name}_samples"], params["seed"],
         )
-        features[name] = extract_reward_features(model.transformer, sequences, params["batch_size"])
+        features[name] = extract_reward_features(backbone, sequences, params["batch_size"])
         targets[name] = labels
         items[name] = np.asarray([vocab.token_to_item[sequence[-1]] for sequence in sequences])
         del sequences
@@ -350,6 +352,34 @@ def fit_reward_catboost(
     )
     print(f"CatBoost: сохранено {head.tree_count_} деревьев.")
     return head
+
+
+def evaluate_reward_catboost(
+    head: CatBoostRegressor,
+    features: dict[str, np.ndarray],
+    targets: dict[str, np.ndarray],
+    model_name: str = "CatBoost",
+) -> pd.DataFrame:
+    """Оценить готовый CatBoost на validation и test в процентных пунктах.
+
+    Args:
+        head: Обученный CatBoost.
+        features: Признаки по частям данных.
+        targets: Доли прослушивания тех же примеров.
+        model_name: Название модели в таблице.
+
+    Returns:
+        Таблица MAE/RMSE с индексами Split и Model.
+    """
+    rows = []
+    for split in ("val", "test"):
+        predicted = head.predict(features[split])
+        rows.append({
+            "Split": split, "Model": model_name,
+            "MAE (п.п.)": mean_absolute_error(targets[split], predicted) * 100,
+            "RMSE (п.п.)": np.sqrt(mean_squared_error(targets[split], predicted)) * 100,
+        })
+    return pd.DataFrame(rows).set_index(["Split", "Model"])
 
 
 def save_reward_model(

@@ -149,4 +149,19 @@ REWARD_UNFROZEN_PARAMS = {
     "seed": 42,
 }
 
+# Первый RL-эксперимент: один следующий трек
+RL_PARAMS = {
+    "reward_type": "listening",  # listening, repeat_penalty, popularity_penalty
+    "penalty": 0.1,
+    "kl_coef": 0.05,
+    "train_samples": 5_000,
+    "val_samples": 512,
+    "num_epochs": 2,
+    "batch_size": 32,
+    "lr": 1e-5,
+    "weight_decay": 0.01,
+    "max_grad_norm": 1.0,
+    "seed": 42,
+}
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

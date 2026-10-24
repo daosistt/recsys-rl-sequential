@@ -1,4 +1,4 @@
-from src.config import AdamW, DataLoader, Dataset, GPT2LMHeadModel, Path, Ridge, json, np, pd, pickle, torch, tqdm
+from src.config import AdamW, DataLoader, Dataset, GPT2Config, GPT2LMHeadModel, Path, Ridge, json, np, pd, pickle, torch, tqdm
 from src.evaluation import load_model
 from src.reward_model import clear_memory, make_reward_examples
 from src.vocabulary import Vocabulary
@@ -41,17 +41,18 @@ class UnfrozenRewardModel(torch.nn.Module):
 
     Args:
         gpt: Копия сохранённого GPT-2 бейзлайна.
-        ridge: Обученная Ridge на признаках этого GPT-2.
+        ridge: Обученная Ridge или None при восстановлении всех весов из чекпоинта.
     """
 
-    def __init__(self, gpt: GPT2LMHeadModel, ridge: Ridge) -> None:
+    def __init__(self, gpt: GPT2LMHeadModel, ridge: Ridge | None = None) -> None:
         super().__init__()
         self.config = gpt.config
         self.backbone = gpt.transformer
         self.head = torch.nn.Linear(gpt.config.n_embd, 1)
-        with torch.no_grad():
-            self.head.weight.copy_(torch.as_tensor(ridge.coef_).reshape(1, -1))
-            self.head.bias.fill_(float(ridge.intercept_))
+        if ridge is not None:
+            with torch.no_grad():
+                self.head.weight.copy_(torch.as_tensor(ridge.coef_).reshape(1, -1))
+                self.head.bias.fill_(float(ridge.intercept_))
         self.requires_grad_(True)
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -62,6 +63,30 @@ class UnfrozenRewardModel(torch.nn.Module):
             position_ids=positions, use_cache=False,
         ).last_hidden_state
         return self.head(hidden[:, -1]).squeeze(-1)
+
+
+def load_unfrozen_reward(
+    artifact_dir: Path, device: torch.device,
+) -> tuple[UnfrozenRewardModel, dict]:
+    """Загрузить лучший чекпоинт дообученной reward model без повторного обучения.
+
+    Args:
+        artifact_dir: Папка reward_unfrozen_minfreq5 с best.pt.
+        device: Устройство для извлечения эмбеддингов или предсказания отклика.
+
+    Returns:
+        Замороженная модель и конфиги исходного эксперимента.
+    """
+    checkpoint = torch.load(artifact_dir / "best.pt", map_location="cpu", weights_only=True)
+    # Состояние optimizer для извлечения признаков не нужно.
+    checkpoint.pop("optimizer_state_dict", None)
+    model = UnfrozenRewardModel(GPT2LMHeadModel(GPT2Config(**checkpoint["model_config"])))
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.requires_grad_(False)
+    model.eval()
+    print(f"Reward checkpoint: эпоха {checkpoint['epoch']}, "
+          f"validation MAE={checkpoint['best_val_mae']:.3f} п.п.")
+    return model.to(device), checkpoint["experiment"]
 
 
 def initialize_unfrozen_reward(
