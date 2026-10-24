@@ -1,4 +1,5 @@
 import os
+import gc
 import shutil
 import json
 from collections import Counter
@@ -17,6 +18,9 @@ from torch.optim import Optimizer, AdamW
 from torch.utils.data import Dataset, DataLoader
 from transformers import GPT2Config, GPT2LMHeadModel
 from tqdm.auto import tqdm
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from catboost import CatBoostRegressor
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("RECSYS_DATA_DIR", PROJECT_ROOT / "data"))
@@ -77,6 +81,47 @@ TRAIN_PARAMS = {
     "weight_decay": 0.01,
     "seed": 42,
     "plot_every": 50,
+}
+
+# Подвыборки для reward model с замороженным GPT-2
+REWARD_PARAMS = {
+    "train_samples": 20_000,
+    "val_samples": 5_000,
+    "test_samples": 5_000,
+    "batch_size": 64,
+    "seed": 42,
+}
+
+REWARD_CATBOOST_PARAMS = {
+    "iterations": 500,
+    "depth": 6,
+    "learning_rate": 0.05,
+    "loss_function": "RMSE",
+    "eval_metric": "MAE",
+    "early_stopping_rounds": 50,
+    "random_seed": 42,
+    "task_type": "CPU",
+    "thread_count": 4,
+    "verbose": 100,
+    "allow_writing_files": False,
+}
+
+REWARD_EXTRA_FEATURE_NAMES = [
+    "track_length_seconds",
+    "past_train_track_mean",
+    "past_user_mean",
+    "past_user_track_count",
+    "past_user_short_fraction",
+]
+
+REWARD_UNFROZEN_PARAMS = {
+    "num_epochs": 3,
+    "batch_size": 32,
+    "backbone_lr": 1e-5,
+    "head_lr": 1e-4,
+    "weight_decay": 0.01,
+    "max_grad_norm": 1.0,
+    "seed": 42,
 }
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
