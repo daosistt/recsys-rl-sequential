@@ -60,6 +60,31 @@ def setup_paths() -> None:
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def find_artifact_dir(name: str) -> Path:
+    """Найти сохранённый эксперимент локально, на Drive или в Kaggle Input.
+
+    Args:
+        name: Имя папки эксперимента, независимо от имени Kaggle dataset.
+
+    Returns:
+        Папка из ARTIFACTS_DIR, а при её отсутствии — из /kaggle/input.
+
+    Raises:
+        FileNotFoundError: Папка не найдена.
+        ValueError: В Kaggle Input найдено несколько папок с таким именем.
+    """
+    artifact_dir = ARTIFACTS_DIR / name
+    if artifact_dir.is_dir():
+        return artifact_dir
+
+    matches = sorted(path for path in Path("/kaggle/input").rglob(name) if path.is_dir())
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Найдено несколько папок {name}; укажите путь явно: {matches}")
+    raise FileNotFoundError(f"Не найдена папка {name}. Добавьте артефакты в ARTIFACTS_DIR или Kaggle Input.")
+
+
 # Параметры модели GPT-2
 GPT2_PARAMS = {
     "n_positions": 64,
