@@ -1,4 +1,5 @@
-from src.config import Counter, GPT2Config, GPT2LMHeadModel, Path, json, np, pd, pickle, torch, tqdm
+from src.config import CatBoostRegressor, Counter, GPT2Config, GPT2LMHeadModel, Path, json, np, pd, pickle, torch, tqdm
+from src.reinforce import policy_log_probs, score_actions
 from src.vocabulary import Vocabulary
 
 
@@ -198,6 +199,100 @@ def compare_baselines(
         "Personal frequency": evaluate_metrics(personal_recommendations, targets, ks),
         model_name: model_metrics,
     }, names=["Model"])
+
+
+def prepare_evaluation_contexts(
+    train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame,
+) -> tuple[list[dict], list[list[int]]]:
+    """Собрать реальные истории до первого test-события для ранжирования и награды.
+
+    Args:
+        train: Истории train с item_id, timestamp и played_ratio_pct.
+        val: Истории validation, добавляемые в контекст.
+        test: Истории test; пустые истории пропускаются.
+
+    Returns:
+        Контексты с полной историей и временем запроса, первые test-треки
+        в исходных item_id. Отклики из test в контекст не попадают.
+    """
+    columns = ("item_id", "timestamp", "played_ratio_pct")
+    histories = {
+        row.uid: {name: np.asarray(getattr(row, name)) for name in columns}
+        for row in train.itertuples(index=False)
+    }
+    for row in val.itertuples(index=False):
+        for name in columns:
+            histories[row.uid][name] = np.concatenate((histories[row.uid][name], getattr(row, name)))
+    contexts, targets = [], []
+    for row in test.itertuples(index=False):
+        if not len(row.item_id):
+            continue
+        contexts.append({"history": histories[row.uid], "query_time": int(row.timestamp[0])})
+        targets.append([int(row.item_id[0])])
+    return contexts, targets
+
+
+def evaluate_policy(
+    model: GPT2LMHeadModel,
+    reference: GPT2LMHeadModel,
+    head: CatBoostRegressor,
+    vocab: Vocabulary,
+    contexts: list[dict],
+    targets: list[list[int]],
+    statistics: dict,
+    params: dict,
+    ks: tuple[int, ...] = (5, 10, 20),
+    batch_size: int = 32,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Оценить релевантность, жадный top-1 и поведение статического top-K.
+
+    Args:
+        model: Исходная либо RL-дообученная GPT-2.
+        reference: Замороженная исходная GPT-2 для KL и reward model.
+        head: Зафиксированный CatBoost.
+        vocab: Общий словарь кандидатов.
+        contexts: Полные реальные истории из prepare_evaluation_contexts.
+        targets: Первые test-треки, включая неизвестные цели.
+        statistics: Статистики только train.
+        params: Одинаковая функция награды и сила штрафа для всех моделей.
+        ks: Значения K для метрик релевантности.
+        batch_size: Размер батча оценки.
+
+    Returns:
+        Recall/NDCG/MAP и словарь награды, KL и показателей поведения.
+        Награда и ratio считаются для top-1, поведение — для top-max(ks).
+        KL усредняется по тем же контекстам, без PAD/UNK.
+    """
+    model.eval()
+    reference.eval()
+    tokens = [vocab.encode(list(c["history"]["item_id"][-model.config.n_positions:])) for c in contexts]
+    recommendations = recommend_top_k(model, tokens, vocab, max(ks), batch_size)
+    metrics = evaluate_metrics(recommendations, targets, ks)
+    rewards, ratios, divergences = [], [], []
+    with torch.no_grad():
+        for start in tqdm(range(0, len(contexts), batch_size), desc="Reward and KL"):
+            batch = contexts[start:start + batch_size]
+            top_items = [row[0] for row in recommendations[start:start + batch_size]]
+            actions = torch.tensor(vocab.encode(top_items), dtype=torch.long) - 2
+            batch_rewards, batch_ratios = score_actions(reference, head, vocab, batch, actions, statistics, params)
+            log_probs = policy_log_probs(model, batch, vocab)
+            ref_probs = log_probs if model is reference else policy_log_probs(reference, batch, vocab)
+            divergences.extend((log_probs.exp() * (log_probs - ref_probs)).sum(-1).cpu().tolist())
+            rewards.extend(batch_rewards)
+            ratios.extend(batch_ratios)
+    counts = Counter(item for row in recommendations for item in row)
+    n, k = len(recommendations), len(recommendations[0])
+    histories = [set(c["history"]["item_id"]) for c in contexts]
+    overlap = sum(count * (count - 1) for count in counts.values()) / (n * (n - 1) * k) if n > 1 else 0.0
+    behavior = {
+        "Predicted ratio@1": float(np.mean(ratios)), "Reward@1": float(np.mean(rewards)),
+        "KL": float(np.mean(divergences)),
+        f"Seen@{k} (%)": 100 * np.mean([item in history for row, history in zip(recommendations, histories) for item in row]),
+        f"Catalog coverage@{k} (%)": 100 * len(counts) / (len(vocab) - 2),
+        f"Overlap@{k} (%)": 100 * overlap,
+        f"Mean popularity@{k}": np.mean([statistics["popularity"][item] for row in recommendations for item in row]),
+    }
+    return metrics, behavior
 
 
 def recall_at_k(recommendations: list[int], targets: list[int], k: int = 10) -> float:

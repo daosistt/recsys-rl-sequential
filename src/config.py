@@ -3,6 +3,7 @@ import gc
 import shutil
 import json
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 import pickle
 
@@ -151,7 +152,7 @@ REWARD_UNFROZEN_PARAMS = {
 
 # Первый RL-эксперимент: один следующий трек
 RL_PARAMS = {
-    "reward_type": "listening",  # listening, repeat_penalty, popularity_penalty
+    "reward_type": "repeat_penalty",  # listening, repeat_penalty, popularity_penalty
     "penalty": 0.1,
     "kl_coef": 0.05,
     "train_samples": 5_000,
@@ -163,5 +164,16 @@ RL_PARAMS = {
     "max_grad_norm": 1.0,
     "seed": 42,
 }
+
+# Пять шагов: те же контексты, но пять действий на каждый контекст
+RL_MULTISTEP_PARAMS = {
+    **RL_PARAMS,
+    "reward_type": "repeat_penalty",
+    "num_steps": 5,
+    "avoid_repeats": True,
+}
+
+# Одношаговый контроль силы KL; 0.05 уже обучен
+RL_KL_VALUES = (0.01, 0.05, 0.2)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

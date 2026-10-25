@@ -1,4 +1,4 @@
-from src.config import AdamW, CatBoostRegressor, DataLoader, GPT2LMHeadModel, Path, np, pd, pickle, torch, tqdm, json
+from src.config import AdamW, Callable, CatBoostRegressor, DataLoader, GPT2LMHeadModel, Path, np, pd, pickle, torch, tqdm, json
 from src.reward import (
     listening_reward, make_candidate_features, popularity_penalty_reward,
     predict_listening_ratio, repeat_penalty_reward,
@@ -90,6 +90,7 @@ def score_actions(
     actions: torch.Tensor,
     statistics: dict,
     params: dict,
+    generated: list[list[int]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Оценить выбранные треки замороженной reward model и применить награду.
 
@@ -101,14 +102,17 @@ def score_actions(
         actions: Индексы колонок policy_log_probs; token_id = action + 2.
         statistics: Статистики только train из prepare_track_statistics.
         params: reward_type, penalty и batch_size.
+        generated: Ранее выбранные треки. Добавляются в контекст эмбеддингов
+            и проверку повторов, но не в историю наблюдённых откликов.
 
     Returns:
         Итоговые награды и исходные прогнозы доли прослушивания, без градиентов.
     """
     items = vocab.decode((actions.detach().cpu() + 2).tolist())
     histories = [c["history"] for c in contexts]
-    item_histories = [list(history["item_id"]) for history in histories]
     tabular = make_candidate_features(histories, items, [c["query_time"] for c in contexts], statistics)
+    prefixes = generated if generated is not None else [[] for _ in contexts]
+    item_histories = [list(history["item_id"]) + prefix for history, prefix in zip(histories, prefixes)]
     ratios = predict_listening_ratio(reference, head, vocab, item_histories, items, tabular, params["batch_size"])
     reward_type = params["reward_type"]
     if reward_type == "listening":
@@ -204,8 +208,9 @@ def train_reinforce(
     params: dict,
     output_dir: Path,
     experiment: dict,
+    epoch_runner: Callable = run_reinforce_epoch,
 ) -> pd.DataFrame:
-    """Дообучить GPT-2 на один шаг и сохранить лучший по validation objective вариант.
+    """Дообучить GPT-2 и сохранить лучший по validation objective вариант.
 
     Args:
         policy: Свежая копия исходной GPT-2 для каждого варианта награды.
@@ -218,6 +223,7 @@ def train_reinforce(
         params: RL_PARAMS с выбранной наградой и силой KL-штрафа.
         output_dir: Отдельная папка RL-запуска.
         experiment: Конфиг исходного бейзлайна и имена исходных артефактов.
+        epoch_runner: Одношаговый или многошаговый проход по контекстам.
 
     Returns:
         История train/validation, включая epoch=0 до RL. Политика восстанавливается
@@ -236,7 +242,7 @@ def train_reinforce(
 
     policy.requires_grad_(True)
     optimizer = AdamW(policy.parameters(), lr=params["lr"], weight_decay=params["weight_decay"])
-    validation = run_reinforce_epoch(
+    validation = epoch_runner(
         policy, reference, head, vocab, val_contexts, statistics, params, params["seed"],
     )
     best_objective = validation["objective"]
@@ -254,10 +260,10 @@ def train_reinforce(
 
     save_checkpoint("best.pt", 0)
     for epoch in tqdm(range(1, params["num_epochs"] + 1), desc="RL epochs"):
-        training = run_reinforce_epoch(
+        training = epoch_runner(
             policy, reference, head, vocab, train_contexts, statistics, params, params["seed"] + epoch, optimizer,
         )
-        validation = run_reinforce_epoch(
+        validation = epoch_runner(
             policy, reference, head, vocab, val_contexts, statistics, params, params["seed"],
         )
         history.append({"epoch": epoch,

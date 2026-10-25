@@ -1,0 +1,7 @@
+{
+  "exports": "artifacts/report_exports",
+  "baseline_history": "baseline_t4_1000_minfreq5/checkpoints/best.pt",
+  "rl_histories": "artifacts/rl_<reward_type>_seed42/history.csv",
+  "models_trained": false,
+  "inference_run": false
+}
